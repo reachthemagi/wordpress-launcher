@@ -1,0 +1,27 @@
+{
+  "name": "WordPress Codespaces (Dynamic URL)",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "wordpress",
+  "workspaceFolder": "/var/www/html",
+  "forwardPorts": [80],
+  "portsAttributes": {
+    "80": {
+      "label": "WordPress",
+      "onAutoForward": "notify"
+    }
+  },
+  "postCreateCommand": "bash .devcontainer/setup.sh",
+  "remoteUser": "root",
+  "containerEnv": {
+    "CODESPACES": "true"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "bmewburn.vscode-intelephense-client",
+        "xdebug.php-debug",
+        "wordpresstoolbox.wordpress-toolbox"
+      ]
+    }
+  }
+}

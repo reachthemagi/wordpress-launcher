@@ -1,26 +1,27 @@
-# WordPress on GitHub Codespaces – AI Agent Instructions
+# WordPress on GitHub Codespaces
 
-**Purpose:** Fully automated, zero-localhost WordPress environment that works in *any* GitHub Codespace.  
-**Critical requirement:** The site URL and wp-admin must **never** redirect to `localhost`.  
-All URLs must be generated dynamically from Codespaces environment variables.
+Create a reliable WordPress development environment in GitHub Codespaces that uses the dynamic Codespaces URL and never redirects to localhost.
 
----
+## Critical Requirements
 
-## 1. Required Files to Create
+- Never hard-code `localhost` or any static domain.
+- Always derive the site URL from `CODESPACE_NAME` + `GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN`.
+- Use `remoteUser: root` (required for the official WordPress image — `www-data` causes workbench connection failures).
+- Force both `WP_HOME` and `WP_SITEURL` at container start and after install.
+- Handle HTTPS correctly behind the Codespaces reverse proxy.
 
-Create the following structure in the repository root:
+## Required Files
+
+Create this structure in the repository root:
 
 ```
 .devcontainer/
 ├── devcontainer.json
 ├── docker-compose.yml
-├── setup.sh
-└── wp-config-extra.php          # (optional but recommended)
+└── setup.sh
 ```
 
----
-
-## 2. `.devcontainer/devcontainer.json`
+### 1. `.devcontainer/devcontainer.json`
 
 ```json
 {
@@ -36,7 +37,7 @@ Create the following structure in the repository root:
     }
   },
   "postCreateCommand": "bash .devcontainer/setup.sh",
-  "remoteUser": "www-data",
+  "remoteUser": "root",
   "containerEnv": {
     "CODESPACES": "true"
   },
@@ -52,9 +53,9 @@ Create the following structure in the repository root:
 }
 ```
 
----
+**Important:** Always use `"remoteUser": "root"`. Using `"www-data"` causes the workbench to fail connecting to the Codespace.
 
-## 3. `.devcontainer/docker-compose.yml`
+### 2. `.devcontainer/docker-compose.yml`
 
 ```yaml
 services:
@@ -68,11 +69,9 @@ services:
       WORDPRESS_DB_USER: wordpress
       WORDPRESS_DB_PASSWORD: wordpress
       WORDPRESS_DB_NAME: wordpress
-      # Pass Codespaces environment variables into the container
       CODESPACE_NAME: ${CODESPACE_NAME}
       GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN: ${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN}
       CODESPACES: "true"
-      # Critical: inject dynamic URL configuration
       WORDPRESS_CONFIG_EXTRA: |
         // === DYNAMIC CODESPACES URL CONFIG (DO NOT REMOVE) ===
         $codespace_name = getenv('CODESPACE_NAME') ?: '';
@@ -114,9 +113,7 @@ volumes:
   wordpress_data:
 ```
 
----
-
-## 4. `.devcontainer/setup.sh`
+### 3. `.devcontainer/setup.sh`
 
 ```bash
 #!/bin/bash
@@ -124,7 +121,7 @@ set -euo pipefail
 
 echo "=== WordPress Codespaces Dynamic Setup ==="
 
-# Wait for database to be ready
+# Wait for database
 echo "Waiting for database..."
 sleep 15
 
@@ -136,7 +133,7 @@ if ! command -v wp &> /dev/null; then
   mv wp-cli.phar /usr/local/bin/wp
 fi
 
-# Build the dynamic Codespaces URL
+# Build dynamic Codespaces URL
 if [ -n "${CODESPACE_NAME:-}" ] && [ -n "${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN:-}" ]; then
   SITE_URL="https://${CODESPACE_NAME}-80.${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN}"
   echo "Detected Codespaces environment"
@@ -149,7 +146,7 @@ echo "Using SITE_URL = $SITE_URL"
 
 cd /var/www/html
 
-# Only install if WordPress is not already installed
+# Install WordPress if needed
 if ! wp core is-installed --allow-root 2>/dev/null; then
   echo "Running wp core install..."
   wp core install \
@@ -161,17 +158,17 @@ if ! wp core is-installed --allow-root 2>/dev/null; then
     --skip-email \
     --allow-root
 else
-  echo "WordPress already installed – updating siteurl and home options..."
-  wp option update siteurl "$SITE_URL" --allow-root
-  wp option update home "$SITE_URL" --allow-root
+  echo "WordPress already installed – forcing correct URLs..."
 fi
 
-# Force the options one more time (safety)
+# Always force the correct URLs (critical)
 wp option update siteurl "$SITE_URL" --allow-root
 wp option update home "$SITE_URL" --allow-root
-
-# Clear any rewrite rules that might contain localhost
 wp rewrite flush --allow-root
+
+# Fix permissions so the web server can still write
+chown -R www-data:www-data /var/www/html/wp-content || true
+chmod -R 755 /var/www/html/wp-content || true
 
 echo "=== Setup complete ==="
 echo "Site URL : $SITE_URL"
@@ -179,100 +176,36 @@ echo "Admin    : $SITE_URL/wp-admin"
 echo "Login    : admin / password"
 ```
 
-Make the script executable after creation:
+After creating the file, make it executable:
 
 ```bash
 chmod +x .devcontainer/setup.sh
 ```
 
----
+## Execution Steps
 
-## 5. Optional but Strongly Recommended – Extra Safety File
-
-Create `.devcontainer/wp-config-extra.php` (you can also mount it or copy it into `wp-config.php`):
-
-```php
-<?php
-/**
- * Extra Codespaces URL protection.
- * This file can be required from wp-config.php if needed.
- */
-
-// Re-assert dynamic URL on every request
-$codespace_name   = getenv('CODESPACE_NAME') ?: '';
-$codespace_domain = getenv('GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN') ?: 'app.github.dev';
-
-if ($codespace_name) {
-    $url = 'https://' . $codespace_name . '-80.' . $codespace_domain;
-    if (!defined('WP_HOME')) {
-        define('WP_HOME', $url);
-    }
-    if (!defined('WP_SITEURL')) {
-        define('WP_SITEURL', $url);
-    }
-}
-
-// Kill any localhost redirects that plugins or core might try
-add_filter('option_home', function ($value) use ($codespace_name, $codespace_domain) {
-    if ($codespace_name && (strpos($value, 'localhost') !== false || strpos($value, '127.0.0.1') !== false)) {
-        return 'https://' . $codespace_name . '-80.' . $codespace_domain;
-    }
-    return $value;
-});
-
-add_filter('option_siteurl', function ($value) use ($codespace_name, $codespace_domain) {
-    if ($codespace_name && (strpos($value, 'localhost') !== false || strpos($value, '127.0.0.1') !== false)) {
-        return 'https://' . $codespace_name . '-80.' . $codespace_domain;
-    }
-    return $value;
-});
-```
-
----
-
-## 6. Agent Execution Steps (Follow Exactly)
-
-1. Create the three files above (`.devcontainer/devcontainer.json`, `docker-compose.yml`, `setup.sh`).
+1. Create the three files above.
 2. Make `setup.sh` executable.
 3. Commit and push the `.devcontainer` folder.
-4. Create a new Codespace from the repository (or rebuild the existing one).
-5. Wait for the `postCreateCommand` to finish (watch the terminal).
-6. Open the **Ports** panel → click the globe icon next to port **80**.
-7. The browser should open the correct `https://<codespace-name>-80.app.github.dev` URL.
-8. Append `/wp-admin` to reach the dashboard.
-9. Login: `admin` / `password`.
+4. **Delete** any existing Codespace for this repo (do not just rebuild).
+5. Create a brand new Codespace.
+6. Wait for the `postCreateCommand` to finish.
+7. Open the Ports panel → click the globe icon next to port 80.
+8. Append `/wp-admin` to the URL.
+9. Login with `admin` / `password`.
 
----
+## Verification
 
-## 7. Verification Commands (Run inside the Codespace)
+Run inside the Codespace:
 
 ```bash
-# Confirm the dynamic URL is set
 wp option get home --allow-root
 wp option get siteurl --allow-root
-
-# Should both print the full https://xxxx-80.app.github.dev URL
-
-# Test that no localhost remains
-wp option get home --allow-root | grep -v localhost
 ```
 
----
+Both commands must return the full `https://xxxx-80.app.github.dev` URL (never localhost).
 
-## 8. Common Failure Modes & Fixes
-
-| Problem | Cause | Fix |
-|---------|-------|-----|
-| Redirects to localhost | `WP_HOME` / `WP_SITEURL` not set or overridden | Re-run `setup.sh` or force with `wp option update` |
-| Mixed content / broken assets | HTTPS not detected | Ensure `HTTP_X_FORWARDED_PROTO` handling is present |
-| Port mismatch | Using wrong port in URL | Always use `-80.` (the host port mapped in docker-compose) |
-| Old Codespace | Environment variables missing | Rebuild Codespace after adding the files |
-
----
-
-## 9. One-liner to Force Correct URL Anytime
-
-If the URL ever drifts, run this inside the Codespace:
+## Force Correct URL Anytime
 
 ```bash
 SITE_URL="https://${CODESPACE_NAME}-80.${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN}"
@@ -282,16 +215,17 @@ wp rewrite flush --allow-root
 echo "Forced URL to $SITE_URL"
 ```
 
----
+## Common Failures
 
-## 10. Summary for the AI Agent
+| Problem | Cause | Fix |
+|---------|-------|-----|
+| Workbench cannot connect | `remoteUser` set to `www-data` | Change to `"remoteUser": "root"` and recreate Codespace |
+| Redirects to localhost | WP_HOME / WP_SITEURL not forced | Re-run setup.sh or use the force URL one-liner |
+| Mixed content warnings | Missing HTTPS detection | Ensure WORDPRESS_CONFIG_EXTRA contains the X-Forwarded-Proto block |
+| Port mismatch | Wrong port in URL | Always use `-80.` (the published host port) |
 
-- **Never hard-code** `localhost` or any static domain.
-- Always derive the URL from `$CODESPACE_NAME` + `$GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN`.
-- Set both `WP_HOME` and `WP_SITEURL` at container start **and** via `wp option update` after install.
-- Force HTTPS detection with `HTTP_X_FORWARDED_PROTO`.
-- Flush rewrite rules after changing the URL.
-- Prefer the official `wordpress` image + MariaDB for simplicity and reliability.
+## Notes
 
-This configuration has been proven to prevent the classic Codespaces → localhost redirect loop.  
-Use it as the single source of truth for any WordPress Codespaces project.
+- The official `wordpress` image + MariaDB is preferred for simplicity and reliability.
+- Plugins and themes from wordpress.org can be installed normally via the admin or WP-CLI.
+- Installed plugins/themes live in the container volume and are lost if the Codespace is deleted (unless committed elsewhere).

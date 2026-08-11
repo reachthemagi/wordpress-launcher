@@ -1,0 +1,53 @@
+services:
+  wordpress:
+    image: wordpress:latest
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    environment:
+      WORDPRESS_DB_HOST: db
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD: wordpress
+      WORDPRESS_DB_NAME: wordpress
+      CODESPACE_NAME: ${CODESPACE_NAME}
+      GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN: ${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN}
+      CODESPACES: "true"
+      WORDPRESS_CONFIG_EXTRA: |
+        // === DYNAMIC CODESPACES URL CONFIG (DO NOT REMOVE) ===
+        $$codespace_name = getenv('CODESPACE_NAME') ?: '';
+        $$codespace_domain = getenv('GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN') ?: 'app.github.dev';
+
+        if (!empty($$codespace_name)) {
+          $$dynamic_url = 'https://' . $$codespace_name . '-80.' . $$codespace_domain;
+          define('WP_HOME', $$dynamic_url);
+          define('WP_SITEURL', $$dynamic_url);
+        }
+
+        // Force HTTPS detection behind Codespaces reverse proxy
+        if (isset($$_SERVER['HTTP_X_FORWARDED_PROTO']) && $$_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') {
+          $$_SERVER['HTTPS'] = 'on';
+        }
+        if (isset($$_SERVER['HTTP_X_FORWARDED_HOST'])) {
+          $$_SERVER['HTTP_HOST'] = $$_SERVER['HTTP_X_FORWARDED_HOST'];
+        }
+        // === END DYNAMIC CONFIG ===
+    volumes:
+      - ..:/var/www/html
+      - wordpress_data:/var/www/html/wp-content
+    depends_on:
+      - db
+
+  db:
+    image: mariadb:10.11
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: wordpress
+      MYSQL_USER: wordpress
+      MYSQL_PASSWORD: wordpress
+      MYSQL_ROOT_PASSWORD: rootpassword
+    volumes:
+      - db_data:/var/lib/mysql
+
+volumes:
+  db_data:
+  wordpress_data:
