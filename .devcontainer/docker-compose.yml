@@ -13,24 +13,35 @@ services:
       GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN: ${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN}
       CODESPACES: "true"
       WORDPRESS_CONFIG_EXTRA: |
-        // === DYNAMIC CODESPACES URL CONFIG (DO NOT REMOVE) ===
-        $$codespace_name = getenv('CODESPACE_NAME') ?: '';
+        // === AGGRESSIVE CODESPACES URL FIX (DO NOT REMOVE) ===
+        $$codespace_name   = getenv('CODESPACE_NAME') ?: '';
         $$codespace_domain = getenv('GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN') ?: 'app.github.dev';
 
         if (!empty($$codespace_name)) {
-          $$dynamic_url = 'https://' . $$codespace_name . '-80.' . $$codespace_domain;
+          $$dynamic_host = $$codespace_name . '-80.' . $$codespace_domain;
+          $$dynamic_url  = 'https://' . $$dynamic_host;
+
+          // Force the constants (highest priority)
           define('WP_HOME', $$dynamic_url);
           define('WP_SITEURL', $$dynamic_url);
+
+          // Force server variables that WordPress uses for redirects
+          $$_SERVER['HTTP_HOST']   = $$dynamic_host;
+          $$_SERVER['SERVER_NAME'] = $$dynamic_host;
+          $$_SERVER['HTTPS']       = 'on';
+
+          // Also handle forwarded headers (fallback if present)
+          if (isset($$_SERVER['HTTP_X_FORWARDED_PROTO']) && $$_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') {
+            $$_SERVER['HTTPS'] = 'on';
+          }
+          if (isset($$_SERVER['HTTP_X_FORWARDED_HOST'])) {
+            $$_SERVER['HTTP_HOST'] = $$_SERVER['HTTP_X_FORWARDED_HOST'];
+          }
         }
 
-        // Force HTTPS detection behind Codespaces reverse proxy
-        if (isset($$_SERVER['HTTP_X_FORWARDED_PROTO']) && $$_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') {
-          $$_SERVER['HTTPS'] = 'on';
-        }
-        if (isset($$_SERVER['HTTP_X_FORWARDED_HOST'])) {
-          $$_SERVER['HTTP_HOST'] = $$_SERVER['HTTP_X_FORWARDED_HOST'];
-        }
-        // === END DYNAMIC CONFIG ===
+        // Force SSL for admin
+        define('FORCE_SSL_ADMIN', true);
+        // === END FIX ===
     volumes:
       - ..:/var/www/html
       - wordpress_data:/var/www/html/wp-content

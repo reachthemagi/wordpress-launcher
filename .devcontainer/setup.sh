@@ -46,6 +46,12 @@ fi
 # Always force the correct URLs (critical)
 wp option update siteurl "$SITE_URL" --allow-root
 wp option update home "$SITE_URL" --allow-root
+
+# Also clean any leftover localhost references in the database
+wp search-replace 'http://localhost' "$SITE_URL" --all-tables --precise --allow-root || true
+wp search-replace 'https://localhost' "$SITE_URL" --all-tables --precise --allow-root || true
+wp search-replace 'http://127.0.0.1' "$SITE_URL" --all-tables --precise --allow-root || true
+
 wp rewrite flush --allow-root
 
 # Fix permissions so the web server can still write
